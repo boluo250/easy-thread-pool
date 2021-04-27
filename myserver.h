@@ -14,37 +14,41 @@
 #include <cstring>
 #include <map>
 #include <unordered_map>
-#include "thread-pool.h"
-#include "mytask.h"
 
-using namespace std;
+#include "thread-pool.h"
+#include "myconnect.h"
+
 const int MAX_EVENT_NUMBER = 10000; //最大事件数,一般取连接数的1/100
 
 class MyServer
 {
 public:
-    MyServer();
+    MyServer(int port, int thread_num);
     ~MyServer();
 
-    void init(int port, int thread_num);
-
-    void createThreadPool();
-    void eventListen();
-    void eventLoop();
-
-    bool dealNewClient();
+    void start();
 
 private:
+    void createThreadPool_();
+    void eventListen_();
+    void eventLoop_();
+    bool dealNewClient_();
+    void CloseConn_(MyConnect* client);
+    void onRead_(MyConnect *client);
+    void dealRead_(MyConnect *client);
+    int SetFdNonblock(int fd);
+
+private:
+    static const int MAX_FD = 65536;
     int listen_fd_;
     int epoll_fd_;
     int port_;
     struct epoll_event events_[MAX_EVENT_NUMBER];
     
-    MyTask *mt_;
     //线程池相关
-    ThreadPool<MyTask> *thread_pool_;
+    ThreadPool *thread_pool_;
     int thread_num_;
 
-    unordered_map<int, MyTask> users_;
+    unordered_map<int, MyConnect> users_;
 };
 #endif

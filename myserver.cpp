@@ -1,31 +1,33 @@
 #include "myserver.h"
 
 
-MyServer::MyServer()
+MyServer::MyServer(int port, int thread_num)
+:port_(port),
+thread_num_(thread_num)
 {
-    mt_ = new MyTask;
 }
 
 MyServer::~MyServer()
 {
-    delete mt_;
     delete thread_pool_;
 }
 
-void MyServer::init(int port, int thread_num)
+void MyServer::start()
 {
-    port_ = port;
-    thread_num_ = thread_num;
+    createThreadPool_();
+    eventListen_();
+    eventLoop_();
 }
 
 
-void MyServer::createThreadPool()
+void MyServer::createThreadPool_()
 {
-    thread_pool_ = new ThreadPool<MyTask>(thread_num_);
+    thread_pool_ = new ThreadPool(thread_num_);
     thread_pool_->start();
+    std::this_thread::sleep_for(std::chrono::milliseconds(500));
 }
 
-void MyServer::eventListen()
+void MyServer::eventListen_()
 {
     //网络编程基础步骤
     listen_fd_ = socket(AF_INET, SOCK_STREAM, 0);
@@ -50,13 +52,14 @@ void MyServer::eventListen()
     assert(epoll_fd_ != -1);
 
     struct epoll_event event;
+    //listen fd 适合默认LT
     event.events = EPOLLIN;
     event.data.fd = listen_fd_;
     ret = epoll_ctl(epoll_fd_,EPOLL_CTL_ADD,listen_fd_,&event);
     assert(ret != -1);
 }
 
-void MyServer::eventLoop()
+void MyServer::eventLoop_()
 {
     printf("start eventLoop:\n");
     while(1)
@@ -69,48 +72,34 @@ void MyServer::eventLoop()
 
         for(int i = 0; i < nready; ++i)
         {
-            int sockfd = events_[i].data.fd;
+            int fd = events_[i].data.fd;
 
             //处理新到的客户连接
-            if(sockfd == listen_fd_)
+            if(fd == listen_fd_)
             {
-                printf("dealNewClient()\n");
-                bool flag = dealNewClient();
+                //printf("dealNewClient()\n");
+                bool flag = dealNewClient_();
                 if(false == flag)
                     continue;
             }
+            else if(events_[i].events & (EPOLLRDHUP | EPOLLHUP | EPOLLERR)) {
+                assert(users_.count(fd) > 0);
+                CloseConn_(&users_[fd]);
+            }
             else if(events_[i].events & EPOLLIN){
-                
-                char buffer[1024] = {0};
-                int ret = recv(sockfd,buffer,5,0);
-                if(ret < 0){
-                    if(errno == EAGAIN || errno == EWOULDBLOCK){
-
-                    }else{
-                       ;
-                    }
-                    printf("disconnect1!\n");
-                    close(sockfd);
-                    struct epoll_event event;
-                    event.events = EPOLLIN;
-                    event.data.fd = sockfd;
-                    epoll_ctl(epoll_fd_,EPOLL_CTL_DEL,sockfd,&event);
-                }else if(0 == ret){
-                    //服务端大量出现time_wait的原因，就是客户端断开了，服务端没有及时调用close函数
-                    printf("disconnect2!\n");
-                    close(sockfd);
-                }
-                else{
-                    printf("recv: %s, %d Bytes\n",buffer,ret);
-                }
+                printf("abcd\n");
+                //std::this_thread::sleep_for(std::chrono::milliseconds(2000));
+                assert(users_.count(fd) > 0);
+                dealRead_(&users_[fd]); 
             }
         }
 
     }
 }
 
-bool MyServer::dealNewClient()
+bool MyServer::dealNewClient_()
 {
+    
     struct sockaddr_in client_address;
     socklen_t client_addrlength = sizeof(client_address);
 
@@ -121,16 +110,44 @@ bool MyServer::dealNewClient()
         printf("%s:errno is:%d", "accept error", errno);
         return false;
     }
-    else{
-        
-        printf("new connect ip:%s\n",inet_ntoa(client_address.sin_addr));
-        printf("connfd:%d\n",connfd);
-    }
+    //printf("test\n");
     struct epoll_event event;
+    //LT水平触发:有数据一直触发
+    //ET:从没有数据到有数据的过程中才触发
     event.events = EPOLLIN;
     event.data.fd = connfd;
     int ret = epoll_ctl(epoll_fd_,EPOLL_CTL_ADD,connfd,&event);
     assert(ret != -1);
-    //close(connfd);
+
+    
+    users_[connfd].init(connfd, client_address);
+    SetFdNonblock(connfd);
     return true;
+}
+
+void MyServer::CloseConn_(MyConnect* client) {
+    assert(client);
+    int fd = client->GetFd();
+    printf("Client[%d] quit!", fd);
+    struct epoll_event event;
+    event.events = EPOLLIN;
+    event.data.fd = fd;
+    epoll_ctl(epoll_fd_,EPOLL_CTL_DEL,fd,&event);
+    client->myclose();
+}
+
+void MyServer::dealRead_(MyConnect *client){
+    assert(client);
+    thread_pool_->appendTask(std::bind(&MyServer::onRead_, this, client));
+}
+
+void MyServer::onRead_(MyConnect *client)
+{
+    assert(client);
+    client->readBuf();
+}
+
+int MyServer::SetFdNonblock(int fd) {
+    assert(fd > 0);
+    return fcntl(fd, F_SETFL, fcntl(fd, F_GETFD, 0) | O_NONBLOCK);
 }

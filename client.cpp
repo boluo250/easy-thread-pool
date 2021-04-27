@@ -12,7 +12,10 @@
 #include <cstring>
 
 #define SERVERPORTID 8888    
-#define SERVERIPADRR "172.17.140.154"
+#define SERVERIPADRR "172.18.17.18"
+
+
+//g++ -o client client.cpp
 int main()
 {
 	
@@ -38,7 +41,7 @@ int main()
 	}
 	ret = send(sfd,"1234",5,0);
 	printf("ret:%d\n",ret);
-		//close(sfd);
+	close(sfd);
 	
 	return 0;
 
